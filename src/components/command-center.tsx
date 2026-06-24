@@ -19,6 +19,8 @@ import {
   getChatResponseAction,
   runAutoPilotAction,
 } from "@/app/actions/ai";
+import { runAgenticPipeline } from "@/lib/agent-orchestrator";
+import { AgentPipeline, PipelineState } from "@/components/agent-pipeline";
 import {
   ShieldAlert,
   Plus,
@@ -70,36 +72,74 @@ export const CommandCenter: React.FC = () => {
   const [autoPilotGoal, setAutoPilotGoal] = useState("");
   const [autoPilotRunning, setAutoPilotRunning] = useState(false);
 
+  // Agent Pipeline visualization state
+  const [pipelineState, setPipelineState] = useState<PipelineState>({
+    steps: [],
+    isRunning: false,
+    fullConversation: "",
+  });
+  const [showPipeline, setShowPipeline] = useState(false);
+
   const handleAutoPilot = async () => {
     if (!autoPilotGoal.trim() || autoPilotRunning) return;
     setAutoPilotRunning(true);
+
+    // Kick off pipeline visualization
+    const pipelinePromise = runAgenticPipeline(autoPilotGoal.trim(), tasks);
+    setPipelineState(prev => ({ ...prev, isRunning: true, steps: [] }));
+    setShowPipeline(true);
+
+    // Poll for pipeline steps every 800ms so the user sees progress
+    const pollInterval = setInterval(async () => {
+      try {
+        const result = await pipelinePromise;
+        setPipelineState({
+          steps: result.steps,
+          isRunning: false,
+          fullConversation: result.fullConversation,
+        });
+      } catch { /* pipeline not done yet */ }
+    }, 800);
+
     try {
-      const result = await runAutoPilotAction(autoPilotGoal.trim(), userId);
+      const [result] = await Promise.all([pipelinePromise]);
+      clearInterval(pollInterval);
+      setPipelineState({
+        steps: result.steps,
+        isRunning: false,
+        fullConversation: result.fullConversation,
+      });
+
       // Create the task with AI-generated data
+      const baselineTask = await runAutoPilotAction(autoPilotGoal.trim(), userId);
       const newTask: Task = {
         id: `task-${crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36)}`,
         userId,
         title: autoPilotGoal.trim(),
-        description: "Auto-pilot created task",
+        description: "Auto-pilot created task via multi-agent orchestration",
         deadline: new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0],
         status: "todo",
-        priority: result.priority,
-        effort: result.effort,
-        subtasks: result.subtasks,
+        priority: baselineTask.priority,
+        effort: baselineTask.effort,
+        subtasks: baselineTask.subtasks,
         postponedCount: 0,
         createdAt: new Date().toISOString(),
         riskAnalysis: {
-          riskScore: result.riskScore,
+          riskScore: baselineTask.riskScore,
           confidenceScore: 85,
-          reasoning: result.riskReasoning,
+          reasoning: baselineTask.riskReasoning,
           updatedAt: new Date().toISOString(),
         },
       };
       await dbAPI.saveTask(userId, newTask);
       setAutoPilotGoal("");
       setAutoPilotOpen(false);
+      addToast("Task created via multi-agent pipeline. Check the Agent Pipeline for details.", "success");
     } catch (e) {
       console.error(e);
+      clearInterval(pollInterval);
+      setPipelineState(prev => ({ ...prev, isRunning: false }));
+      addToast("Auto-Pilot encountered an error. Task created with default parameters.", "error");
     } finally {
       setAutoPilotRunning(false);
     }
@@ -1102,6 +1142,17 @@ export const CommandCenter: React.FC = () => {
           onUpdateTask={handleUpdateTask}
           onDeleteTask={handleDeleteTask}
           onTriggerRealityCheck={async (action, context) => { handleTriggerRealityCheck(action, context); }}
+        />
+      )}
+
+      {/* AGENT PIPELINE VISUALIZATION MODAL */}
+      {showPipeline && (
+        <AgentPipeline
+          pipeline={pipelineState}
+          onClose={() => {
+            setShowPipeline(false);
+            setPipelineState({ steps: [], isRunning: false, fullConversation: "" });
+          }}
         />
       )}
 

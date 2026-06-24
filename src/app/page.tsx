@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { AuthModal } from "@/components/auth-modal";
 import { CommandCenter } from "@/components/command-center";
 import { motion } from "framer-motion";
-import { Sparkles, ShieldAlert, Zap, Terminal, Brain } from "lucide-react";
+import { Sparkles, ShieldAlert, Zap, Terminal, Brain, Network } from "lucide-react";
 
 export default function Home() {
   const { user, loading } = useAuth();

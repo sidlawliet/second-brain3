@@ -45,9 +45,16 @@ export const AuthModal: React.FC = () => {
     setError("");
     setLoading(true);
     try {
-      await login("guest@secondbrain.ai", "guest123");
+      // Guest mode bypasses Firebase — writes directly to localStorage
+      const guestProfile = {
+        uid: `guest_${crypto.randomUUID?.().slice(0, 8) || Date.now().toString(36)}`,
+        email: "guest@secondbrain.local",
+        displayName: "Guest Operator",
+      };
+      localStorage.setItem("sb_user", JSON.stringify(guestProfile));
+      window.location.reload();
     } catch (err: unknown) {
-      setError((err as Error).message || "Failed to enter guest mode.");
+      setError("Failed to enter guest mode.");
     } finally {
       setLoading(false);
     }
