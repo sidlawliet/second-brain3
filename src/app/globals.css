@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #07080a;
+  --color-surface: #0d0d0d;
+  --color-surface-elevated: #101111;
+  --color-surface-card: #121212;
+  --color-hairline: #242728;
+  --color-hairline-strong: rgba(255, 255, 255, 0.16);
+  --color-ink: #f4f4f6;
+  --color-body: #cdcdcd;
+  --color-charcoal: #d3d3d4;
+  --color-mute: #9c9c9d;
+  --color-ash: #6a6b6c;
+  --color-stone: #434345;
+  --color-on-dark: #ffffff;
+  --color-on-dark-mute: rgba(255, 255, 255, 0.72);
+  --color-button-fg: #000000;
+  
+  --color-accent-blue: #57c1ff;
+  --color-accent-blue-soft: rgba(87, 193, 255, 0.15);
+  --color-accent-red: #ff6161;
+  --color-accent-red-soft: rgba(255, 97, 97, 0.15);
+  --color-accent-green: #59d499;
+  --color-accent-green-soft: rgba(89, 212, 153, 0.15);
+  --color-accent-yellow: #ffc533;
+  --color-accent-yellow-soft: rgba(255, 197, 51, 0.15);
+  
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 16px;
+  
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+/* Base Body Styles */
+body {
+  background-color: #07080a; /* canvas */
+  color: #cdcdcd; /* body */
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  font-feature-settings: "calt" on, "kern" on, "liga" on, "ss03" on;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #07080a;
+}
+::-webkit-scrollbar-thumb {
+  background: #242728;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #434345;
+}
+
+/* Display Font Styling */
+.font-display-xl {
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: 0px;
+  font-feature-settings: "calt" on, "kern" on, "liga" off, "ss02" on, "ss08" on;
+}
+
+/* Keycap Styling */
+.keycap-item {
+  background: linear-gradient(to bottom, #121212, #0d0d0d);
+  border: 1px solid #242728;
+  border-radius: 4px;
+  color: #9c9c9d;
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  font-feature-settings: "ss03" on;
+  font-size: 11px;
+  padding: 1px 5px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+
+/* Hero Diagonal Red Stripes */
+.hero-stripes-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 280px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.15;
+}
+
+.hero-stripe {
+  position: absolute;
+  width: 150px;
+  height: 600px;
+  background: linear-gradient(to bottom, #ff5757, #a1131a);
+  transform: rotate(35deg) translateY(-250px);
+}
+
+.hero-stripe-1 {
+  left: 30%;
+}
+.hero-stripe-2 {
+  left: calc(30% + 180px);
+}
+.hero-stripe-3 {
+  left: calc(30% + 360px);
+}
