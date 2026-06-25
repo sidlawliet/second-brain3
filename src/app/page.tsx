@@ -5,11 +5,18 @@ import { useAuth } from "@/lib/auth-context";
 import { AuthModal } from "@/components/auth-modal";
 import { CommandCenter } from "@/components/command-center";
 import { motion } from "framer-motion";
-import { Sparkles, ShieldAlert, Zap, Terminal, Brain, Network } from "lucide-react";
+import { Sparkles, ShieldAlert, Zap, Terminal, Brain } from "lucide-react";
 
 export default function Home() {
   const { user, loading } = useAuth();
   const [showAuthForm, setShowAuthForm] = useState(false);
+  const [isMac, setIsMac] = useState(true);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsMac(/Mac|iPod|iPhone|iPad/.test(navigator.platform) || /Mac/.test(navigator.userAgent));
+    }
+  }, []);
 
   if (loading) {
     return (
@@ -93,7 +100,7 @@ export default function Home() {
         {/* Keycap shortcuts hint */}
         <div className="text-[11px] text-stone flex items-center justify-center space-x-1.5 pt-1 select-none">
           <span>Or press</span>
-          <span className="keycap-item">⌘</span>
+          <span className="keycap-item">{isMac ? "⌘" : "Ctrl"}</span>
           <span className="keycap-item">K</span>
           <span>to inspect commands</span>
         </div>
@@ -139,7 +146,7 @@ export default function Home() {
                   <Brain className="w-4 h-4 text-accent-yellow" />
                   <span>Prioritize Schedule via Urgency Risk metrics</span>
                 </div>
-                <span className="text-xs text-stone">⌘P</span>
+                <span className="text-xs text-stone">{isMac ? "⌘P" : "Ctrl+P"}</span>
               </div>
 
               <div className="flex items-center justify-between px-3 py-2 text-sm text-mute">
@@ -147,7 +154,7 @@ export default function Home() {
                   <ShieldAlert className="w-4 h-4 text-accent-red" />
                   <span>Trigger Emergency Rescue Mode (Deallocate non-essentials)</span>
                 </div>
-                <span className="text-xs text-stone">⌘R</span>
+                <span className="text-xs text-stone">{isMac ? "⌘R" : "Ctrl+R"}</span>
               </div>
             </div>
           </motion.div>

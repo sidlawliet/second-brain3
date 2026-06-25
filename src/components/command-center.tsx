@@ -4,11 +4,10 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { dbAPI, Task, DailyPlan, Chat, RescueSession, ChatMessage } from "@/lib/db";
 import { CommandPalette } from "./command-palette";
-import { AIChat } from "./ai-chat";
+import { AIChatSidebar } from "./ai-chat-sidebar";
 import { TaskDetail } from "./task-detail";
 import { ErrorBoundary } from "./error-boundary";
 import { useToast } from "./toast-provider";
-import { hasApiKey } from "@/lib/gemini";
 import { recordPostpone, getWeeklyTrend, getProcrastinationInsight } from "@/lib/trend-tracker";
 import {
   getRealityCheckAction,
@@ -17,22 +16,15 @@ import {
   getCoachingInsightAction,
   calculateTaskRiskAction,
   getChatResponseAction,
-  runAutoPilotAction,
+  checkApiKeyAction,
 } from "@/app/actions/ai";
-import { runAgenticPipeline } from "@/lib/agent-orchestrator";
-import { AgentPipeline, PipelineState } from "@/components/agent-pipeline";
+import { DailyFocusPlan } from "./daily-focus-plan";
+import { DeadlineRisks } from "./deadline-risks";
+import { RescueLogs } from "./rescue-logs";
 import {
   ShieldAlert,
-  Plus,
   Search,
-  Calendar,
-  Clock,
-  TrendingUp,
-  MessageSquare,
   LogOut,
-  CheckCircle2,
-  Rocket,
-  X,
 } from "lucide-react";
 
 export const CommandCenter: React.FC = () => {
@@ -46,10 +38,17 @@ export const CommandCenter: React.FC = () => {
   const [chat, setChat] = useState<Chat | null>(null);
   const [rescue, setRescue] = useState<RescueSession | null>(null);
 
+  // OS detection state
+  const [isMac, setIsMac] = useState(true);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsMac(/Mac|iPod|iPhone|iPad/.test(navigator.platform) || /Mac/.test(navigator.userAgent));
+    }
+  }, []);
+
   // UI States
   const [activeTab, setActiveTab] = useState<"dashboard" | "tasks" | "rescue">("dashboard");
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   
   // Dynamic AI States
@@ -67,89 +66,15 @@ export const CommandCenter: React.FC = () => {
     })()
   );
 
-  // Auto-Pilot: One-click full chain demo
-  const [autoPilotOpen, setAutoPilotOpen] = useState(false);
-  const [autoPilotGoal, setAutoPilotGoal] = useState("");
-  const [autoPilotRunning, setAutoPilotRunning] = useState(false);
-
-  // Agent Pipeline visualization state
-  const [pipelineState, setPipelineState] = useState<PipelineState>({
-    steps: [],
-    isRunning: false,
-    fullConversation: "",
-  });
-  const [showPipeline, setShowPipeline] = useState(false);
-
-  const handleAutoPilot = async () => {
-    if (!autoPilotGoal.trim() || autoPilotRunning) return;
-    setAutoPilotRunning(true);
-
-    // Kick off pipeline visualization
-    const pipelinePromise = runAgenticPipeline(autoPilotGoal.trim(), tasks);
-    setPipelineState(prev => ({ ...prev, isRunning: true, steps: [] }));
-    setShowPipeline(true);
-
-    // Poll for pipeline steps every 800ms so the user sees progress
-    const pollInterval = setInterval(async () => {
-      try {
-        const result = await pipelinePromise;
-        setPipelineState({
-          steps: result.steps,
-          isRunning: false,
-          fullConversation: result.fullConversation,
-        });
-      } catch { /* pipeline not done yet */ }
-    }, 800);
-
-    try {
-      const [result] = await Promise.all([pipelinePromise]);
-      clearInterval(pollInterval);
-      setPipelineState({
-        steps: result.steps,
-        isRunning: false,
-        fullConversation: result.fullConversation,
-      });
-
-      // Create the task with AI-generated data
-      const baselineTask = await runAutoPilotAction(autoPilotGoal.trim(), userId);
-      const newTask: Task = {
-        id: `task-${crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36)}`,
-        userId,
-        title: autoPilotGoal.trim(),
-        description: "Auto-pilot created task via multi-agent orchestration",
-        deadline: new Date(Date.now() + 3 * 86400000).toISOString().split("T")[0],
-        status: "todo",
-        priority: baselineTask.priority,
-        effort: baselineTask.effort,
-        subtasks: baselineTask.subtasks,
-        postponedCount: 0,
-        createdAt: new Date().toISOString(),
-        riskAnalysis: {
-          riskScore: baselineTask.riskScore,
-          confidenceScore: 85,
-          reasoning: baselineTask.riskReasoning,
-          updatedAt: new Date().toISOString(),
-        },
-      };
-      await dbAPI.saveTask(userId, newTask);
-      setAutoPilotGoal("");
-      setAutoPilotOpen(false);
-      addToast("Task created via multi-agent pipeline. Check the Agent Pipeline for details.", "success");
-    } catch (e) {
-      console.error(e);
-      clearInterval(pollInterval);
-      setPipelineState(prev => ({ ...prev, isRunning: false }));
-      addToast("Auto-Pilot encountered an error. Task created with default parameters.", "error");
-    } finally {
-      setAutoPilotRunning(false);
-    }
-  };
-
   // Warn if API key is missing
   useEffect(() => {
-    if (!hasApiKey()) {
-      addToast("GEMINI_API_KEY not set. AI features running in offline mode.", "warning");
-    }
+    const verifyApiKey = async () => {
+      const active = await checkApiKeyAction();
+      if (!active) {
+        addToast("GEMINI_API_KEY not set. AI features running in offline mode.", "warning");
+      }
+    };
+    verifyApiKey();
   }, []);
 
   // Seed onboarding data for first-time users (Firebase or localStorage)
@@ -223,11 +148,6 @@ export const CommandCenter: React.FC = () => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setIsPaletteOpen(prev => !prev);
-      }
-      // Toggle AI Chat: Alt + C or Option + C
-      if (e.key === "c" && e.altKey) {
-        e.preventDefault();
-        setIsChatOpen(prev => !prev);
       }
       // Toggle Rescue Mode: Alt + R or Option + R
       if (e.key === "r" && e.altKey) {
@@ -391,9 +311,26 @@ export const CommandCenter: React.FC = () => {
     }
   };
 
-  // AI Chat interaction — conversational, not deflection
   const handleSendMessage = async (text: string) => {
-    if (!chat) return;
+    let activeChat = chat;
+    if (!activeChat) {
+      const docId = `${userId}_chat`;
+      activeChat = {
+        id: docId,
+        userId,
+        messages: [
+          {
+            id: "welcome-1",
+            sender: "assistant",
+            text: "I am your AI Chief of Staff. I track task risks, prioritize schedules, and keep you accountable. What are we shipping today?",
+            timestamp: new Date().toISOString()
+          }
+        ],
+        updatedAt: new Date().toISOString()
+      };
+      await dbAPI.saveChat(userId, activeChat);
+    }
+
     setAiLoading(true);
 
     const userMsg: ChatMessage = {
@@ -403,9 +340,9 @@ export const CommandCenter: React.FC = () => {
       timestamp: new Date().toISOString()
     };
 
-    const updatedMessages = [...chat.messages, userMsg];
+    const updatedMessages = [...activeChat.messages, userMsg];
     await dbAPI.saveChat(userId, {
-      ...chat,
+      ...activeChat,
       messages: updatedMessages,
       updatedAt: new Date().toISOString()
     });
@@ -416,23 +353,65 @@ export const CommandCenter: React.FC = () => {
         `${m.sender === "user" ? "User" : "Assistant"}: ${m.text}`
       ).join("\n");
       const taskContext = tasks.length > 0
-        ? `Current tasks (${tasks.length} total): ${tasks.filter(t => t.status !== "done").slice(0, 5).map(t => `${t.title} (risk: ${t.riskAnalysis.riskScore}%)`).join(", ")}`
+        ? `Current tasks (${tasks.length} total): ${tasks.filter(t => t.status !== "done").slice(0, 5).map(t => `${t.title} (risk: ${t.riskAnalysis?.riskScore || 0}%)`).join(", ")}`
         : "";
 
-      const response = await getChatResponseAction(text, taskContext, recentHistory);
+      const { text: responseText, actions } = await getChatResponseAction(text, taskContext, recentHistory);
 
       const assistantMsg: ChatMessage = {
         id: `msg-${Date.now()}-a`,
         sender: "assistant",
-        text: response,
+        text: responseText,
         timestamp: new Date().toISOString()
       };
 
       await dbAPI.saveChat(userId, {
-        ...chat,
+        ...activeChat,
         messages: [...updatedMessages, assistantMsg],
         updatedAt: new Date().toISOString()
       });
+
+      // Execute client-side tool actions returned by Gemini
+      if (actions && actions.length > 0) {
+        for (const action of actions) {
+          if (action.type === "create_task") {
+            const title = typeof action.payload.title === "string" ? action.payload.title : "";
+            const dl = typeof action.payload.deadline === "string" ? action.payload.deadline : new Date(Date.now() + 86400000).toISOString().split("T")[0];
+            await handleCreateTask(title, dl);
+            addToast(`Created task: "${title}"`, "success");
+          } else if (action.type === "complete_task") {
+            const taskQuery = typeof action.payload.taskQuery === "string" ? action.payload.taskQuery : "";
+            const queryStr = taskQuery.toLowerCase();
+            const matchedTask = tasks.find(t => 
+              t.title.toLowerCase().includes(queryStr) || 
+              t.id === queryStr
+            );
+            if (matchedTask) {
+              await handleUpdateTask(matchedTask.id, { status: "done" });
+              addToast(`Completed task: "${matchedTask.title}"`, "success");
+            } else {
+              addToast(`Could not find task matching: "${taskQuery}"`, "warning");
+            }
+          } else if (action.type === "postpone_task") {
+            const taskQuery = typeof action.payload.taskQuery === "string" ? action.payload.taskQuery : "";
+            const newDeadline = typeof action.payload.newDeadline === "string" ? action.payload.newDeadline : "";
+            const queryStr = taskQuery.toLowerCase();
+            const matchedTask = tasks.find(t => 
+              t.title.toLowerCase().includes(queryStr) || 
+              t.id === queryStr
+            );
+            if (matchedTask) {
+              await handleUpdateTask(matchedTask.id, { 
+                deadline: newDeadline,
+                postponedCount: matchedTask.postponedCount + 1 
+              });
+              addToast(`Postponed "${matchedTask.title}" to ${newDeadline}`, "info");
+            } else {
+              addToast(`Could not find task matching: "${taskQuery}"`, "warning");
+            }
+          }
+        }
+      }
     } catch (err) {
       console.error(err);
       // Fallback message on error
@@ -444,7 +423,7 @@ export const CommandCenter: React.FC = () => {
           timestamp: new Date().toISOString()
         };
         await dbAPI.saveChat(userId, {
-          ...chat,
+          ...activeChat,
           messages: [...updatedMessages, fallbackMsg],
           updatedAt: new Date().toISOString()
         });
@@ -563,14 +542,6 @@ export const CommandCenter: React.FC = () => {
         {/* Right Nav */}
         <div className="flex items-center space-x-3">
           <button
-            onClick={() => setAutoPilotOpen(true)}
-            disabled={autoPilotRunning}
-            className="h-7 px-3 text-xs font-medium rounded-md flex items-center transition-colors border duration-150 cursor-pointer bg-accent-green-soft border-accent-green/20 text-accent-green hover:bg-accent-green/20"
-          >
-            <Rocket className="w-3.5 h-3.5 mr-1" />
-            Auto-Pilot
-          </button>
-          <button
             onClick={handleToggleRescueMode}
             className={`h-7 px-3 text-xs font-medium rounded-md flex items-center transition-colors border duration-150 cursor-pointer ${
               isRescueActive
@@ -580,13 +551,6 @@ export const CommandCenter: React.FC = () => {
           >
             <ShieldAlert className="w-3.5 h-3.5 mr-1" />
             {isRescueActive ? "Rescue Active" : "Emergency Rescue"}
-          </button>
-
-          <button
-            onClick={() => setIsChatOpen(true)}
-            className="h-7 w-7 bg-surface-elevated border border-hairline rounded-md flex items-center justify-center text-on-dark hover:border-hairline-strong transition-colors cursor-pointer"
-          >
-            <MessageSquare className="w-4 h-4" />
           </button>
 
           <div className="h-4 w-[1px] bg-hairline" />
@@ -614,10 +578,10 @@ export const CommandCenter: React.FC = () => {
         >
           <div className="flex items-center space-x-3 text-stone">
             <Search className="w-4.5 h-4.5" />
-            <span className="text-sm">Search commands, schedule tasks or ask AI (Cmd+K)...</span>
+            <span className="text-sm">Search commands, schedule tasks or ask AI ({isMac ? "Cmd+K" : "Ctrl+K"})...</span>
           </div>
           <div className="flex items-center space-x-1">
-            <span className="keycap-item">⌘</span>
+            <span className="keycap-item">{isMac ? "⌘" : "Ctrl"}</span>
             <span className="keycap-item">K</span>
           </div>
         </div>
@@ -650,452 +614,129 @@ export const CommandCenter: React.FC = () => {
         </div>
         </ErrorBoundary>
 
-        {/* Dashboard Tab Content */}
-        {activeTab === "dashboard" && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
-            {/* Daily Schedule Panel */}
-            <section className="lg:col-span-4 bg-surface border border-hairline rounded-lg p-5 flex flex-col space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-on-dark tracking-wide uppercase select-none flex items-center">
-                  <Calendar className="w-4 h-4 text-accent-blue mr-1.5" />
-                  Daily focus Plan
-                </h3>
-                <button
-                  onClick={handleAIPrioritization}
-                  disabled={aiLoading || tasks.length === 0}
-                  className="text-[11px] bg-surface-elevated border border-hairline text-accent-blue px-2.5 h-6 rounded hover:bg-surface-card hover:border-hairline-strong transition-colors cursor-pointer"
-                >
-                  Regenerate
-                </button>
+        {/* Two-Column Grid: Left for tab content, right for permanent sidebar chat */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          
+          {/* Main Content Column */}
+          <div className="lg:col-span-8 space-y-6">
+            {/* Dashboard Tab Content */}
+            {activeTab === "dashboard" && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <DailyFocusPlan
+                  tasks={tasks}
+                  dailyPlan={dailyPlan}
+                  aiLoading={aiLoading}
+                  handleAIPrioritization={handleAIPrioritization}
+                  setSelectedTask={setSelectedTask}
+                  trendData={trendData}
+                />
+                <DeadlineRisks
+                  criticalTasks={criticalTasks}
+                  newTaskTitle={newTaskTitle}
+                  setNewTaskTitle={setNewTaskTitle}
+                  newTaskDeadline={newTaskDeadline}
+                  setNewTaskDeadline={setNewTaskDeadline}
+                  handleCreateTask={handleCreateTask}
+                  handleUpdateTask={handleUpdateTask}
+                  setSelectedTask={setSelectedTask}
+                  handleTriggerRealityCheck={handleTriggerRealityCheck}
+                />
               </div>
+            )}
 
-              {dailyPlan?.coachingInsight && (
-                <div className="text-xs border-l-2 border-accent-blue bg-accent-blue-soft/30 p-3 rounded-r-md text-ink leading-relaxed">
-                  <p className="font-semibold text-[10px] text-accent-blue tracking-wider uppercase mb-0.5">Focus directive</p>
-                  {dailyPlan.coachingInsight}
-                </div>
-              )}
-
-              {/* Scheduled Blocks */}
-              {tasks.length === 0 ? (
-                <div className="flex-grow flex items-center justify-center py-12 text-center text-xs text-stone border border-dashed border-hairline rounded-md">
-                  No tasks registered. Create a task via Cmd+K to initialize daily scheduling.
-                </div>
-              ) : (
-                <div className="space-y-3.5">
-                  {dailyPlan?.tasksOrder && dailyPlan.tasksOrder.length > 0 ? (
-                    dailyPlan.tasksOrder.map((tid, idx) => {
-                      const t = tasks.find(item => item.id === tid);
-                      if (!t || t.status === "done") return null;
-
-                      // Map indexes to schedule blocks
-                      const times = ["09:00 AM — Morning focus", "01:00 PM — Afternoon focus", "04:30 PM — Daily wrap-up"];
-                      const blockTitle = times[Math.min(idx, times.length - 1)];
-
-                      return (
-                        <div key={t.id} className="space-y-1.5 group">
-                          <span className="text-[10px] font-semibold text-mute font-mono block">
-                            {blockTitle}
-                          </span>
-                          <button
-                            onClick={() => setSelectedTask(t)}
-                            className="w-full text-left bg-surface-elevated border border-hairline rounded-md p-3 hover:border-hairline-strong transition-colors duration-150 cursor-pointer flex items-center justify-between"
-                          >
-                            <div className="min-w-0 pr-2">
-                              <p className="text-xs font-semibold text-on-dark truncate group-hover:text-accent-blue transition-colors">{t.title}</p>
-                              <p className="text-[10px] text-stone font-mono mt-0.5">Effort: {t.effort} | Risk: {t.riskAnalysis.riskScore}%</p>
-                            </div>
-                            <Clock className="w-3.5 h-3.5 text-stone flex-shrink-0 group-hover:text-on-dark transition-colors" />
-                          </button>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="py-6 text-center text-xs text-mute bg-surface-elevated/40 rounded border border-hairline">
-                      Daily order not initialized. Click Regenerate to prioritize with AI.
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Procrastination Trend Widget */}
-              <div className="border-t border-hairline pt-4 mt-2">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-semibold text-mute uppercase tracking-wider font-mono">Postpone Trend</span>
-                  <span className="text-[10px] font-mono text-stone">
-                    {trendData.thisWeek > 0 ? `${trendData.thisWeek} this week` : ""}
-                    {trendData.lastWeek > 0 ? ` · ${trendData.lastWeek} last week` : ""}
-                  </span>
-                </div>
-                <p className="text-[11px] text-ink leading-relaxed">{trendData.insight}</p>
-                {trendData.lastWeek > 0 && trendData.thisWeek < trendData.lastWeek && (
-                  <p className="text-[10px] text-accent-green font-semibold mt-1 flex items-center">
-                    <TrendingUp className="w-3 h-3 mr-1" /> Improving
-                  </p>
-                )}
-                {trendData.lastWeek > 0 && trendData.thisWeek > trendData.lastWeek && (
-                  <p className="text-[10px] text-accent-red font-semibold mt-1 flex items-center">
-                    <TrendingUp className="w-3 h-3 mr-1 rotate-180" /> Worsening
-                  </p>
-                )}
-              </div>
-            </section>
-
-            {/* Task Grid & Deadlines Matrix */}
-            <section className="lg:col-span-8 bg-surface border border-hairline rounded-lg p-5 flex flex-col space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-on-dark tracking-wide uppercase select-none flex items-center">
-                  <TrendingUp className="w-4 h-4 text-accent-green mr-1.5" />
-                  Active deadline Risks
-                </h3>
-              </div>
-
-              {/* Prominent Quick Add Task Form Console */}
-              <div className="bg-surface-elevated/40 border border-hairline rounded-md p-3.5 space-y-3">
-                <span className="text-[10px] font-semibold text-mute font-mono block uppercase">
-                  Add New Task Console
-                </span>
-                <div className="flex flex-col md:flex-row md:items-center gap-3">
-                  <input
-                    type="text"
-                    value={newTaskTitle}
-                    onChange={(e) => setNewTaskTitle(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleCreateTask()}
-                    placeholder="What goal needs decomposition? (e.g. Design Presentation Deck)"
-                    className="flex-grow h-9 bg-surface text-on-dark border border-hairline rounded-md px-3 text-xs focus:outline-none focus:border-hairline-strong placeholder-stone"
-                  />
-                  <div className="flex items-center gap-3 flex-shrink-0 justify-between md:justify-start w-full md:w-auto">
-                    <div className="flex items-center space-x-1.5">
-                      <span className="text-[10px] text-stone font-mono uppercase">Due:</span>
-                      <input
-                        type="date"
-                        value={newTaskDeadline}
-                        onChange={(e) => setNewTaskDeadline(e.target.value)}
-                        className="h-9 bg-surface text-on-dark border border-hairline rounded-md px-2.5 text-xs focus:outline-none focus:border-hairline-strong [color-scheme:dark]"
-                      />
-                    </div>
-                    <button
-                      onClick={() => handleCreateTask()}
-                      className="h-9 px-4 bg-on-dark text-button-fg rounded-md text-xs font-semibold hover:bg-primary-pressed transition-colors duration-150 cursor-pointer flex items-center"
-                    >
-                      <Plus className="w-3.5 h-3.5 mr-1" />
-                      Add Task
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tasks List */}
-              <div className="flex-grow overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="border-b border-hairline text-left">
-                      <th className="py-2.5 text-[10px] font-semibold text-mute uppercase select-none tracking-wider font-mono">Task details</th>
-                      <th className="py-2.5 text-[10px] font-semibold text-mute uppercase select-none tracking-wider font-mono text-center">AI priority</th>
-                      <th className="py-2.5 text-[10px] font-semibold text-mute uppercase select-none tracking-wider font-mono text-center">Deadline risk</th>
-                      <th className="py-2.5 text-[10px] font-semibold text-mute uppercase select-none tracking-wider font-mono text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {criticalTasks.filter(t => t.status !== "done").map((t) => (
-                      <tr 
-                        key={t.id}
-                        className="border-b border-hairline/50 hover:bg-surface-elevated/40 transition-colors group"
-                      >
-                        <td className="py-3">
-                          <button
-                            onClick={() => setSelectedTask(t)}
-                            className="text-left cursor-pointer min-w-0 pr-4 block"
-                          >
-                            <p className="text-xs font-bold text-on-dark truncate max-w-[280px] group-hover:text-accent-blue transition-colors">{t.title}</p>
-                            <p className="text-[10px] text-stone truncate max-w-[280px] mt-0.5">{t.description}</p>
-                          </button>
-                        </td>
-                        <td className="py-3 text-center">
-                          <span className={`inline-block text-[9px] font-semibold px-2 py-0.5 rounded tracking-wide uppercase border font-mono ${
-                            t.priority === "high" ? "text-accent-red border-accent-red/20 bg-accent-red-soft" :
-                            t.priority === "medium" ? "text-accent-yellow border-accent-yellow/20 bg-accent-yellow-soft" :
-                            "text-accent-green border-accent-green/20 bg-accent-green-soft"
-                          }`}>
-                            {t.priority}
-                          </span>
-                        </td>
-                        <td className="py-3">
-                          <div className="flex flex-col items-center justify-center">
-                            <span className={`text-xs font-semibold ${
-                              t.riskAnalysis.riskScore > 75 ? "text-accent-red" : 
-                              t.riskAnalysis.riskScore > 40 ? "text-accent-yellow" : "text-accent-green"
-                            }`}>
-                              {t.riskAnalysis.riskScore}%
-                            </span>
-                            <span className="text-[9px] text-stone font-mono mt-0.5">Due {t.deadline}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 text-right">
-                          <div className="flex items-center justify-end space-x-1.5">
-                            <button
-                              onClick={async () => {
-                                await handleUpdateTask(t.id, { status: "done" });
-                                handleTriggerRealityCheck("complete_task", `User successfully finished '${t.title}'.`);
-                              }}
-                              className="text-stone hover:text-accent-green p-1 cursor-pointer transition-colors duration-150"
-                              title="Mark complete"
-                            >
-                              <CheckCircle2 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => setSelectedTask(t)}
-                              className="text-xs font-mono keycap-item opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer"
-                            >
-                              ⏎ settings
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-
-                    {criticalTasks.filter(t => t.status !== "done").length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="py-12 text-center text-xs text-stone">
-                          No pending tasks found. Set targets in the inputs above.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </div>
-        )}
-
-        {/* Tasks Matrix Tab */}
-        {activeTab === "tasks" && (
-          <section className="bg-surface border border-hairline rounded-lg p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-hairline pb-3">
-              <h3 className="text-sm font-semibold text-on-dark tracking-wide uppercase">All Configured Tasks</h3>
-              <span className="text-xs text-mute font-mono">{tasks.length} total tasks</span>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {tasks.map(t => (
-                <div 
-                  key={t.id} 
-                  className={`bg-surface-elevated border border-hairline rounded-md p-4 flex flex-col justify-between space-y-4 hover:border-hairline-strong transition-colors group`}
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded tracking-wide uppercase border font-mono ${
-                        t.status === "done" ? "text-stone border-hairline bg-surface" :
-                        t.priority === "high" ? "text-accent-red border-accent-red/20 bg-accent-red-soft" : "text-mute border-hairline bg-surface"
-                      }`}>
-                        {t.status === "done" ? "completed" : `${t.priority} priority`}
-                      </span>
-                      <span className={`text-xs font-semibold ${
-                        t.status === "done" ? "text-stone" :
-                        t.riskAnalysis.riskScore > 75 ? "text-accent-red" : 
-                        t.riskAnalysis.riskScore > 40 ? "text-accent-yellow" : "text-accent-green"
-                      }`}>
-                        {t.status === "done" ? "Done" : `Risk: ${t.riskAnalysis.riskScore}%`}
-                      </span>
-                    </div>
-
-                    <div>
-                      <h4 className={`text-xs font-bold ${t.status === "done" ? "line-through text-stone" : "text-on-dark"}`}>
-                        {t.title}
-                      </h4>
-                      <p className="text-[11px] text-stone leading-relaxed mt-1 line-clamp-2">
-                        {t.description}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between border-t border-hairline/40 pt-3">
-                    <span className="text-[10px] text-mute font-mono">Due {t.deadline}</span>
-                    <button
-                      onClick={() => setSelectedTask(t)}
-                      className="text-xs font-semibold text-accent-blue hover:text-on-dark transition-colors cursor-pointer"
-                    >
-                      Configure &rarr;
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Rescue Mode View Tab */}
-        {activeTab === "rescue" && isRescueActive && rescue && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fadeIn">
-            
-            {/* Rescue Summary card */}
-            <div className="lg:col-span-4 bg-accent-red-soft/20 border border-accent-red/30 rounded-lg p-5 space-y-4">
-              <div className="flex items-center space-x-2 text-accent-red">
-                <ShieldAlert className="w-5 h-5 animate-pulse" />
-                <h3 className="text-sm font-semibold tracking-wide uppercase select-none">Rescue Status</h3>
-              </div>
-              
-              <div className="space-y-1">
-                <span className="text-[10px] text-stone font-semibold uppercase tracking-wider block">Rescue Strategy</span>
-                <p className="text-xs text-ink leading-relaxed bg-canvas/40 border border-hairline p-3 rounded-md">
-                  {rescue.rescueReason}
-                </p>
-              </div>
-
-              <div className="space-y-3 pt-2">
-                <div className="flex items-center justify-between text-xs text-mute font-mono">
-                  <span>Critical path items:</span>
-                  <span className="text-on-dark">{rescue.criticalPath?.length}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs text-mute font-mono">
-                  <span>Stashed tasks:</span>
-                  <span className="text-on-dark">{rescue.deallocatedTasks?.length}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs text-mute font-mono">
-                  <span>Activation time:</span>
-                  <span className="text-on-dark">{new Date(rescue.activatedAt || "").toLocaleTimeString()}</span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleToggleRescueMode}
-                className="w-full h-9 bg-accent-red text-canvas rounded-md text-xs font-bold transition-colors hover:bg-accent-red/90 cursor-pointer flex items-center justify-center"
-              >
-                Deactivate Rescue Mode
-              </button>
-            </div>
-
-            {/* Critical Path Tasks */}
-            <div className="lg:col-span-8 space-y-6">
-              
+            {/* Tasks Matrix Tab */}
+            {activeTab === "tasks" && (
               <section className="bg-surface border border-hairline rounded-lg p-5 space-y-4">
-                <div className="border-b border-hairline pb-2.5">
-                  <h3 className="text-xs font-bold text-accent-green tracking-wide uppercase select-none flex items-center">
-                    <CheckCircle2 className="w-4 h-4 mr-1.5" />
-                    Critical Path (Non-negotiable Work)
-                  </h3>
+                <div className="flex items-center justify-between border-b border-hairline pb-3">
+                  <h3 className="text-sm font-semibold text-on-dark tracking-wide uppercase">All Configured Tasks</h3>
+                  <span className="text-xs text-mute font-mono">{tasks.length} total tasks</span>
                 </div>
-
-                <div className="space-y-3">
-                  {tasks.filter(t => rescue.criticalPath?.includes(t.id)).map(t => (
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {tasks.map(t => (
                     <div 
                       key={t.id} 
-                      className="bg-surface-elevated border border-hairline rounded-md p-3.5 flex items-center justify-between"
+                      className={`bg-surface-elevated border border-hairline rounded-md p-4 flex flex-col justify-between space-y-4 hover:border-hairline-strong transition-colors group`}
                     >
-                      <div>
-                        <h4 className="text-xs font-bold text-on-dark">{t.title}</h4>
-                        <p className="text-[10px] text-stone mt-0.5">Due {t.deadline} | Risk score: {t.riskAnalysis.riskScore}%</p>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded tracking-wide uppercase border font-mono ${
+                            t.status === "done" ? "text-stone border-hairline bg-surface" :
+                            t.priority === "high" ? "text-accent-red border-accent-red/20 bg-accent-red-soft" : "text-mute border-hairline bg-surface"
+                          }`}>
+                            {t.status === "done" ? "completed" : `${t.priority} priority`}
+                          </span>
+                          <span className={`text-xs font-semibold ${
+                            t.status === "done" ? "text-stone" :
+                            t.riskAnalysis.riskScore > 75 ? "text-accent-red" : 
+                            t.riskAnalysis.riskScore > 40 ? "text-accent-yellow" : "text-accent-green"
+                          }`}>
+                            {t.status === "done" ? "Done" : `Risk: ${t.riskAnalysis.riskScore}%`}
+                          </span>
+                        </div>
+
+                        <div>
+                          <h4 className={`text-xs font-bold ${t.status === "done" ? "line-through text-stone" : "text-on-dark"}`}>
+                            {t.title}
+                          </h4>
+                          <p className="text-[11px] text-stone leading-relaxed mt-1 line-clamp-2">
+                            {t.description}
+                          </p>
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={async () => {
-                            await handleUpdateTask(t.id, { status: "done" });
-                            handleTriggerRealityCheck("complete_task", `User completed rescue path item '${t.title}'.`);
-                          }}
-                          className="h-7 px-3 bg-accent-green text-canvas rounded text-xs font-bold transition-colors hover:bg-accent-green/90 cursor-pointer"
-                        >
-                          Complete
-                        </button>
+
+                      <div className="flex items-center justify-between border-t border-hairline/40 pt-3">
+                        <span className="text-[10px] text-mute font-mono">Due {t.deadline}</span>
                         <button
                           onClick={() => setSelectedTask(t)}
-                          className="text-xs font-mono keycap-item cursor-pointer"
+                          className="text-xs font-semibold text-accent-blue hover:text-on-dark transition-colors cursor-pointer"
                         >
-                          Configure
+                          Configure &rarr;
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
               </section>
+            )}
 
-              {/* Stashed tasks */}
-              <section className="bg-surface border border-hairline rounded-lg p-5 opacity-60 hover:opacity-100 transition-opacity duration-200 space-y-3">
-                <div className="border-b border-hairline pb-2.5">
-                  <h3 className="text-xs font-bold text-mute tracking-wide uppercase select-none flex items-center">
-                    <Clock className="w-4 h-4 mr-1.5" />
-                    Stashed Tasks (Deallocated for Focus)
-                  </h3>
-                </div>
-
-                <div className="space-y-2">
-                  {stashedTasks.map(t => (
-                    <div 
-                      key={t.id} 
-                      className="bg-surface-card border border-hairline rounded px-3 py-2 flex items-center justify-between text-xs text-mute"
-                    >
-                      <span className="truncate max-w-[400px]">{t.title}</span>
-                      <span className="font-mono text-[10px] text-stone">Stashed until Rescue Mode ends</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-            </div>
+            {/* Rescue Mode View Tab */}
+            {activeTab === "rescue" && isRescueActive && rescue && (
+              <RescueLogs
+                rescue={rescue}
+                tasks={tasks}
+                stashedTasks={stashedTasks}
+                handleToggleRescueMode={handleToggleRescueMode}
+                handleUpdateTask={handleUpdateTask}
+                setSelectedTask={setSelectedTask}
+                handleTriggerRealityCheck={handleTriggerRealityCheck}
+              />
+            )}
           </div>
-        )}
+
+          {/* AI Chief of Staff Chat Sidebar */}
+          <div className="lg:col-span-4 h-[calc(100vh-8rem)] lg:sticky lg:top-24 flex flex-col min-h-[450px]">
+            <AIChatSidebar
+              chat={chat}
+              onSendMessage={handleSendMessage}
+              isLoading={aiLoading}
+            />
+          </div>
+
+        </div>
 
       </main>
 
       {/* Footer shortcut helper banner */}
       <footer className="max-w-[1240px] mx-auto px-6 py-6 border-t border-hairline text-xs text-mute flex flex-col md:flex-row md:items-center justify-between gap-3 select-none">
         <div className="flex flex-wrap items-center gap-4">
-          <span className="flex items-center"><span className="keycap-item mr-1.5">⌘K</span> Command Search</span>
-          <span className="flex items-center"><span className="keycap-item mr-1.5">⌥C</span> Toggle AI Chat</span>
-          <span className="flex items-center"><span className="keycap-item mr-1.5">⌥R</span> Toggle Rescue Mode</span>
+          <span className="flex items-center"><span className="keycap-item mr-1.5">{isMac ? "⌘K" : "Ctrl+K"}</span> Command Search</span>
+          <span className="flex items-center"><span className="keycap-item mr-1.5">{isMac ? "⌥R" : "Alt+R"}</span> Toggle Rescue Mode</span>
         </div>
         <div>
           <span>Second Brain &mdash; Staff-level Hackathon Agent</span>
         </div>
       </footer>
-
-      {/* AUTO-PILOT MODAL */}
-      {autoPilotOpen && (
-        <div className="fixed inset-0 bg-canvas/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-surface border border-hairline rounded-lg overflow-hidden flex flex-col shadow-2xl">
-            <div className="px-4 py-3 border-b border-hairline flex items-center justify-between bg-surface-elevated">
-              <span className="text-sm font-semibold text-on-dark tracking-tight flex items-center">
-                <Rocket className="w-4 h-4 text-accent-green mr-1.5" />
-                AI Auto-Pilot
-              </span>
-              <button
-                onClick={() => { if (!autoPilotRunning) { setAutoPilotOpen(false); setAutoPilotGoal(""); } }}
-                className="text-stone hover:text-on-dark transition-colors p-1 rounded-sm cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
-              <p className="text-xs text-mute leading-relaxed">
-                Watch the full AI pipeline in action: planning, risk assessment, and prioritization — all from one goal.
-              </p>
-              <div className="flex flex-col space-y-1.5">
-                <label className="text-xs font-medium text-mute">Goal to decompose</label>
-                <input
-                  type="text"
-                  value={autoPilotGoal}
-                  onChange={(e) => setAutoPilotGoal(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAutoPilot()}
-                  placeholder="e.g. Build Q3 investor presentation"
-                  className="w-full h-9 bg-surface-elevated text-on-dark border border-hairline rounded-md px-3 py-2 text-sm focus:outline-none focus:border-hairline-strong placeholder-stone"
-                  disabled={autoPilotRunning}
-                />
-              </div>
-              <button
-                onClick={handleAutoPilot}
-                disabled={!autoPilotGoal.trim() || autoPilotRunning}
-                className="w-full h-9 bg-accent-green text-canvas rounded-md text-xs font-bold hover:bg-accent-green/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center"
-              >
-                {autoPilotRunning ? (
-                  <span className="flex items-center"><span className="w-3 h-3 rounded-full border-2 border-canvas border-t-transparent animate-spin mr-2" /> Running AI Pipeline...</span>
-                ) : (
-                  <span className="flex items-center"><Rocket className="w-3.5 h-3.5 mr-1.5" /> Execute Auto-Pilot</span>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* COMMAND PALETTE MODAL OVERLAY */}
       <CommandPalette
@@ -1125,15 +766,6 @@ export const CommandCenter: React.FC = () => {
         rescueActive={isRescueActive}
       />
 
-      {/* AI PRODUCTIVITY CHAT DRAWER */}
-      <AIChat
-        isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
-        chat={chat}
-        onSendMessage={handleSendMessage}
-        isLoading={aiLoading}
-      />
-
       {/* TASK DETAIL MODAL */}
       {selectedTask && (
         <TaskDetail
@@ -1142,17 +774,6 @@ export const CommandCenter: React.FC = () => {
           onUpdateTask={handleUpdateTask}
           onDeleteTask={handleDeleteTask}
           onTriggerRealityCheck={async (action, context) => { handleTriggerRealityCheck(action, context); }}
-        />
-      )}
-
-      {/* AGENT PIPELINE VISUALIZATION MODAL */}
-      {showPipeline && (
-        <AgentPipeline
-          pipeline={pipelineState}
-          onClose={() => {
-            setShowPipeline(false);
-            setPipelineState({ steps: [], isRunning: false, fullConversation: "" });
-          }}
         />
       )}
 

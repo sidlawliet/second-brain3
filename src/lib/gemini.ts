@@ -1,12 +1,16 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { Task, Subtask } from "./db";
 
 let AI_INSTANCE: GoogleGenAI | null = null;
 let _hasApiKey: boolean | null = null;
 
+let LAST_KEY: string | null = null;
 function getAI(): GoogleGenAI {
   const key = process.env.GEMINI_API_KEY || "";
-  if (!AI_INSTANCE) AI_INSTANCE = new GoogleGenAI({ apiKey: key });
+  if (!AI_INSTANCE || LAST_KEY !== key) {
+    AI_INSTANCE = new GoogleGenAI({ apiKey: key });
+    LAST_KEY = key;
+  }
   return AI_INSTANCE;
 }
 
@@ -15,6 +19,26 @@ const MODEL_NAME = "gemini-2.0-flash";
 export function hasApiKey(): boolean {
   if (_hasApiKey === null) _hasApiKey = Boolean(process.env.GEMINI_API_KEY);
   return _hasApiKey;
+}
+
+export async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 1, delay = 1000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    const errorStr = String(error);
+    const isRateLimit = 
+      errorStr.includes("429") || 
+      errorStr.toLowerCase().includes("quota") ||
+      errorStr.toLowerCase().includes("rate limit") ||
+      (typeof error === "object" && error !== null && ("status" in error && (error as Record<string, unknown>).status === 429));
+      
+    if (retries > 0 && isRateLimit) {
+      console.warn(`Rate limit hit (429). Retrying in ${delay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return retryWithBackoff(fn, retries - 1, delay * 2);
+    }
+    throw error;
+  }
 }
 
 export type Source = "ai" | "fallback" | "mock";
@@ -36,15 +60,17 @@ async function runAgent<T>(config: AgentConfig<T>, userPrompt: string): Promise<
 
   try {
     const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-      config: {
-        systemInstruction: { parts: [{ text: config.systemInstruction }] },
-        responseMimeType: config.schema ? "application/json" : "text/plain",
-        ...(config.schema ? { responseSchema: config.schema } : {}),
-      },
-    });
+    const response = await retryWithBackoff(() =>
+      ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+        config: {
+          systemInstruction: { parts: [{ text: config.systemInstruction }] },
+          responseMimeType: config.schema ? "application/json" : "text/plain",
+          ...(config.schema ? { responseSchema: config.schema } : {}),
+        },
+      })
+    );
     const text = response.text || "";
     if (config.schema && text) return { data: JSON.parse(text) as T, source: "ai" };
     return { data: text as T, source: "ai" };
@@ -59,17 +85,23 @@ async function callGeminiREST<T>(config: AgentConfig<T>, userPrompt: string): Pr
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${key}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        systemInstruction: { parts: [{ text: config.systemInstruction }] },
-        generationConfig: {
-          responseMimeType: config.schema ? "application/json" : "text/plain",
-          ...(config.schema ? { responseSchema: config.schema } : {}),
-        },
-      }),
+    const res = await retryWithBackoff(async () => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          systemInstruction: { parts: [{ text: config.systemInstruction }] },
+          generationConfig: {
+            responseMimeType: config.schema ? "application/json" : "text/plain",
+            ...(config.schema ? { responseSchema: config.schema } : {}),
+          },
+        }),
+      });
+      if (response.status === 429) {
+        throw new Error("429 rate limit exceeded");
+      }
+      return response;
     });
     if (!res.ok) throw new Error(`REST API returned ${res.status}`);
     const data = await res.json();
@@ -154,40 +186,143 @@ export async function* streamConversation(
   }
 }
 
+export interface ChatAction {
+  type: "create_task" | "complete_task" | "postpone_task";
+  payload: Record<string, unknown>;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const CHAT_TOOLS: any = [
+  {
+    functionDeclarations: [
+      {
+        name: "create_task",
+        description: "Create a new task with a title and an optional deadline.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: "The title of the task to create" },
+            deadline: { type: Type.STRING, description: "Due date in YYYY-MM-DD format (optional)" },
+          },
+          required: ["title"],
+        },
+      },
+      {
+        name: "complete_task",
+        description: "Mark a task as completed.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            taskQuery: { type: Type.STRING, description: "The name, title, or substring of the task to complete" },
+          },
+          required: ["taskQuery"],
+        },
+      },
+      {
+        name: "postpone_task",
+        description: "Postpone an existing task to a new deadline.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            taskQuery: { type: Type.STRING, description: "The title or description of the task to postpone" },
+            newDeadline: { type: Type.STRING, description: "The new deadline date in YYYY-MM-DD format" },
+          },
+          required: ["taskQuery", "newDeadline"],
+        },
+      },
+    ],
+  },
+];
+
 export async function runConversationalAgent(
   systemInstruction: string,
   userPrompt: string,
-): Promise<{ text: string; source: Source }> {
+): Promise<{ text: string; actions?: ChatAction[]; source: Source }> {
   const key = process.env.GEMINI_API_KEY || "";
   if (!key) return { text: mockChatResponse(userPrompt), source: "mock" };
 
   try {
     const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-      config: {
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-      },
-    });
-    const text = response.text || mockChatResponse(userPrompt);
-    return { text, source: text ? "ai" : "mock" };
-  } catch (error) {
-    console.error("Conversational agent failed, falling back to REST:", error);
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${key}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+    let response = await retryWithBackoff(() =>
+      ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+        config: {
           systemInstruction: { parts: [{ text: systemInstruction }] },
-        }),
+          tools: CHAT_TOOLS,
+        },
+      })
+    );
+
+    const actions: ChatAction[] = [];
+    const fcParts = (response.candidates?.[0]?.content?.parts || []).filter(
+      p => p.functionCall
+    );
+
+    if (fcParts.length > 0) {
+      const conversationHistory = [
+        { role: "user", parts: [{ text: userPrompt }] },
+        { role: "model", parts: response.candidates?.[0]?.content?.parts || [] }
+      ];
+
+      const functionResponses = [];
+      for (const part of fcParts) {
+        if (!part.functionCall) continue;
+        const { name, args } = part.functionCall;
+        
+        if (name === "create_task" || name === "complete_task" || name === "postpone_task") {
+          actions.push({
+            type: name,
+          payload: args as Record<string, unknown>,
+          });
+        }
+
+        functionResponses.push({
+          role: "function",
+          parts: [{
+            functionResponse: {
+              name,
+              response: { success: true, message: `Action ${name} executed successfully` }
+            }
+          }]
+        });
+      }
+
+      conversationHistory.push({
+        role: "function",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        parts: functionResponses.flatMap(fr => fr.parts) as any
       });
-      if (!res.ok) throw new Error(`REST API returned ${res.status}`);
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || mockChatResponse(userPrompt);
-      return { text, source: text ? "fallback" : "mock" };
+
+      response = await retryWithBackoff(() =>
+        ai.models.generateContent({
+          model: MODEL_NAME,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          contents: conversationHistory as any,
+          config: {
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            tools: CHAT_TOOLS,
+          }
+        })
+      );
+    }
+
+    const text = response.text || mockChatResponse(userPrompt);
+    return { text, actions, source: "ai" };
+
+  } catch (error) {
+    console.error("Conversational agent with tools failed, falling back to basic:", error);
+    try {
+      const ai = getAI();
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+        config: {
+          systemInstruction: { parts: [{ text: systemInstruction }] },
+        },
+      });
+      const text = response.text || mockChatResponse(userPrompt);
+      return { text, source: "fallback" };
     } catch {
       return { text: mockChatResponse(userPrompt), source: "mock" };
     }

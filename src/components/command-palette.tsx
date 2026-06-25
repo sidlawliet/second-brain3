@@ -30,6 +30,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onSelectTask,
   rescueActive
 }) => {
+  const [isMac, setIsMac] = useState(true);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsMac(/Mac|iPod|iPhone|iPad/.test(navigator.platform) || /Mac/.test(navigator.userAgent));
+    }
+  }, []);
+
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -64,7 +71,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     }
   }, [isOpen]);
 
-
   const systemCommands = [
     {
       id: "cmd-add",
@@ -90,7 +96,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         onRunPrioritization();
         onClose();
       },
-      shortcut: "⌘P"
+      shortcut: isMac ? "⌘P" : "Ctrl+P"
     },
     {
       id: "cmd-rescue",
@@ -103,7 +109,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         onToggleRescue();
         onClose();
       },
-      shortcut: "⌘R"
+      shortcut: isMac ? "⌘R" : "Ctrl+R"
     },
     {
       id: "cmd-reflection",
@@ -114,7 +120,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         onRunReflection();
         onClose();
       },
-      shortcut: "⌘D"
+      shortcut: isMac ? "⌘D" : "Ctrl+D"
     },
     {
       id: "cmd-clear",
@@ -127,7 +133,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           onClose();
         }
       },
-      shortcut: "⌘Del"
+      shortcut: isMac ? "⌘Del" : "Ctrl+Del"
     }
   ];
 

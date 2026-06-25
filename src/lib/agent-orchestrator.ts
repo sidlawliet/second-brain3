@@ -2,7 +2,7 @@
 
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
 import { Task } from "./db";
-import { hasApiKey } from "./gemini";
+import { hasApiKey, retryWithBackoff } from "./gemini";
 import {
   initAgentLog,
   logStep,
@@ -308,21 +308,23 @@ export async function runAgenticPipeline(
       timestamp: Date.now(),
     });
 
-    let response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: [{ role: "user", parts: [{ text: orchestratorPrompt }] }],
-      config: {
-        systemInstruction: {
-          parts: [{ text: "You are the Chief of Staff orchestrator. Use function calls to delegate and tool-call. Execute at least 3 delegations and 2 direct tool calls. Show your reasoning through the tools you choose." }],
-        },
-        tools: AGENT_TOOLS,
-        toolConfig: {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.AUTO,
+    let response = await retryWithBackoff(() =>
+      ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: [{ role: "user", parts: [{ text: orchestratorPrompt }] }],
+        config: {
+          systemInstruction: {
+            parts: [{ text: "You are the Chief of Staff orchestrator. Use function calls to delegate and tool-call. Execute at least 3 delegations and 2 direct tool calls. Show your reasoning through the tools you choose." }],
+          },
+          tools: AGENT_TOOLS,
+          toolConfig: {
+            functionCallingConfig: {
+              mode: FunctionCallingConfigMode.AUTO,
+            },
           },
         },
-      },
-    });
+      })
+    );
 
     // ─── Multi-turn: keep calling tools and feeding results back ───────────
     type HistoryPart = {
@@ -388,16 +390,19 @@ export async function runAgenticPipeline(
       conversationHistory.push(...functionResponses);
 
       // Get next model response
-      response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: conversationHistory,
-        config: {
-          tools: AGENT_TOOLS,
-          toolConfig: {
-            functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO },
+      response = await retryWithBackoff(() =>
+        ai.models.generateContent({
+          model: MODEL_NAME,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          contents: conversationHistory as any,
+          config: {
+            tools: AGENT_TOOLS,
+            toolConfig: {
+              functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO },
+            },
           },
-        },
-      });
+        })
+      );
 
       conversationHistory.push({
         role: "model",
