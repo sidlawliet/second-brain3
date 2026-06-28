@@ -2,6 +2,7 @@
   "name": "second-brain",
   "version": "0.1.0",
   "private": true,
+  "author": "sidlawliet",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
