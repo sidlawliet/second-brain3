@@ -1,23 +1,11 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { Task, Subtask } from "./db";
 
-let AI_INSTANCE: GoogleGenAI | null = null;
 let _hasApiKey: boolean | null = null;
 
-let LAST_KEY: string | null = null;
-function getAI(): GoogleGenAI {
-  const key = process.env.GEMINI_API_KEY || "";
-  if (!AI_INSTANCE || LAST_KEY !== key) {
-    AI_INSTANCE = new GoogleGenAI({ apiKey: key });
-    LAST_KEY = key;
-  }
-  return AI_INSTANCE;
-}
-
-const MODEL_NAME = "gemini-2.0-flash";
+const MODEL_NAME = process.env.OPENAI_API_MODEL || "openrouter/free";
 
 export function hasApiKey(): boolean {
-  if (_hasApiKey === null) _hasApiKey = Boolean(process.env.GEMINI_API_KEY);
+  if (_hasApiKey === null) _hasApiKey = Boolean(process.env.OPENAI_API_KEY);
   return _hasApiKey;
 }
 
@@ -55,61 +43,45 @@ type AgentConfig<T> = {
 type AgentResult<T> = { data: T; source: Source };
 
 async function runAgent<T>(config: AgentConfig<T>, userPrompt: string): Promise<AgentResult<T>> {
-  const key = process.env.GEMINI_API_KEY || "";
+  const key = process.env.OPENAI_API_KEY || "";
   if (!key) return { data: config.mockFallback(), source: "mock" };
 
   try {
-    const ai = getAI();
-    const response = await retryWithBackoff(() =>
-      ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        config: {
-          systemInstruction: { parts: [{ text: config.systemInstruction }] },
-          responseMimeType: config.schema ? "application/json" : "text/plain",
-          ...(config.schema ? { responseSchema: config.schema } : {}),
-        },
-      })
-    );
-    const text = response.text || "";
-    if (config.schema && text) return { data: JSON.parse(text) as T, source: "ai" };
-    return { data: text as T, source: "ai" };
-  } catch (error) {
-    console.error(`Gemini SDK error [${config.name}], falling back to REST API:`, error);
-    return callGeminiREST(config, userPrompt);
-  }
-}
-
-async function callGeminiREST<T>(config: AgentConfig<T>, userPrompt: string): Promise<AgentResult<T>> {
-  const key = process.env.GEMINI_API_KEY || "";
-
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${key}`;
-    const res = await retryWithBackoff(async () => {
-      const response = await fetch(url, {
+    const response = await retryWithBackoff(async () => {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`,
+          "HTTP-Referer": "https://github.com/sidlawliet/second-brain",
+          "X-Title": "Second Brain",
+        },
         body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          systemInstruction: { parts: [{ text: config.systemInstruction }] },
-          generationConfig: {
-            responseMimeType: config.schema ? "application/json" : "text/plain",
-            ...(config.schema ? { responseSchema: config.schema } : {}),
-          },
+          model: MODEL_NAME,
+          messages: [
+            { role: "system", content: config.systemInstruction },
+            { role: "user", content: userPrompt }
+          ],
+          response_format: config.schema ? { type: "json_object" } : undefined,
         }),
       });
-      if (response.status === 429) {
+      if (res.status === 429) {
         throw new Error("429 rate limit exceeded");
       }
-      return response;
+      if (!res.ok) {
+        throw new Error(`OpenRouter returned ${res.status}: ${await res.text()}`);
+      }
+      return res;
     });
-    if (!res.ok) throw new Error(`REST API returned ${res.status}`);
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    if (config.schema && text) return { data: JSON.parse(text) as T, source: "fallback" };
-    return { data: text as T, source: "fallback" };
+
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content || "";
+    if (config.schema && text) {
+      return { data: JSON.parse(text) as T, source: "ai" };
+    }
+    return { data: text as T, source: "ai" };
   } catch (error) {
-    console.error(`REST fallback failed [${config.name}]:`, error);
+    console.error(`OpenAI SDK error [${config.name}]:`, error);
     return { data: config.mockFallback(), source: "mock" };
   }
 }
@@ -120,69 +92,55 @@ export async function* streamConversation(
   systemInstruction: string,
   userPrompt: string,
 ): AsyncGenerator<string, Source, void> {
-  const key = process.env.GEMINI_API_KEY || "";
+  const key = process.env.OPENAI_API_KEY || "";
   if (!key) {
     yield mockChatResponse(userPrompt);
     return "mock" as Source;
   }
 
   try {
-    const ai = getAI();
-    const stream = await ai.models.generateContentStream({
-      model: MODEL_NAME,
-      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-      config: {
-        systemInstruction: { parts: [{ text: systemInstruction }] },
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${key}`,
       },
+      body: JSON.stringify({
+        model: MODEL_NAME,
+        messages: [
+          { role: "system", content: systemInstruction },
+          { role: "user", content: userPrompt }
+        ],
+        stream: true,
+      }),
     });
+    if (!res.ok) throw new Error(`REST API returned ${res.status}`);
+    const reader = res.body?.getReader();
+    if (!reader) { yield mockChatResponse(userPrompt); return "mock" as Source; }
 
-    let full = "";
-    for await (const chunk of stream) {
-      const t = chunk.text || "";
-      if (t) {
-        full += t;
-        yield t;
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const cleaned = line.trim();
+        if (!cleaned || cleaned === "data: [DONE]") continue;
+        if (!cleaned.startsWith("data: ")) continue;
+        try {
+          const parsed = JSON.parse(cleaned.slice(6));
+          const t = parsed.choices?.[0]?.delta?.content || "";
+          if (t) yield t;
+        } catch {}
       }
     }
-    return full ? ("ai" as Source) : ("mock" as Source);
-  } catch (error) {
-    console.error("Streaming agent failed, trying REST:", error);
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:streamGenerateContent?key=${key}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          systemInstruction: { parts: [{ text: systemInstruction }] },
-        }),
-      });
-      if (!res.ok) throw new Error(`REST API returned ${res.status}`);
-      const reader = res.body?.getReader();
-      if (!reader) { yield mockChatResponse(userPrompt); return "mock" as Source; }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const parsed = JSON.parse(line.slice(6));
-            const t = parsed.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            if (t) yield t;
-          } catch {}
-        }
-      }
-      return "fallback" as Source;
-    } catch {
-      yield mockChatResponse(userPrompt);
-      return "mock" as Source;
-    }
+    return "ai" as Source;
+  } catch {
+    yield mockChatResponse(userPrompt);
+    return "mock" as Source;
   }
 }
 
@@ -191,141 +149,143 @@ export interface ChatAction {
   payload: Record<string, unknown>;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const CHAT_TOOLS: any = [
-  {
-    functionDeclarations: [
-      {
-        name: "create_task",
-        description: "Create a new task with a title and an optional deadline.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING, description: "The title of the task to create" },
-            deadline: { type: Type.STRING, description: "Due date in YYYY-MM-DD format (optional)" },
-          },
-          required: ["title"],
-        },
-      },
-      {
-        name: "complete_task",
-        description: "Mark a task as completed.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            taskQuery: { type: Type.STRING, description: "The name, title, or substring of the task to complete" },
-          },
-          required: ["taskQuery"],
-        },
-      },
-      {
-        name: "postpone_task",
-        description: "Postpone an existing task to a new deadline.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            taskQuery: { type: Type.STRING, description: "The title or description of the task to postpone" },
-            newDeadline: { type: Type.STRING, description: "The new deadline date in YYYY-MM-DD format" },
-          },
-          required: ["taskQuery", "newDeadline"],
-        },
-      },
-    ],
-  },
-];
-
 export async function runConversationalAgent(
   systemInstruction: string,
   userPrompt: string,
 ): Promise<{ text: string; actions?: ChatAction[]; source: Source }> {
-  const key = process.env.GEMINI_API_KEY || "";
+  const key = process.env.OPENAI_API_KEY || "";
   if (!key) return { text: mockChatResponse(userPrompt), source: "mock" };
 
   try {
-    const ai = getAI();
-    let response = await retryWithBackoff(() =>
-      ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        config: {
-          systemInstruction: { parts: [{ text: systemInstruction }] },
-          tools: CHAT_TOOLS,
+    const openaiTools = [
+      {
+        type: "function",
+        function: {
+          name: "create_task",
+          description: "Create a new task with a title and an optional deadline.",
+          parameters: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "The title of the task to create" },
+              deadline: { type: "string", description: "Due date in YYYY-MM-DD format (optional)" },
+            },
+            required: ["title"],
+          },
         },
-      })
-    );
+      },
+      {
+        type: "function",
+        function: {
+          name: "complete_task",
+          description: "Mark a task as completed.",
+          parameters: {
+            type: "object",
+            properties: {
+              taskQuery: { type: "string", description: "The name, title, or substring of the task to complete" },
+            },
+            required: ["taskQuery"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "postpone_task",
+          description: "Postpone an existing task to a new deadline.",
+          parameters: {
+            type: "object",
+            properties: {
+              taskQuery: { type: "string", description: "The title or description of the task to postpone" },
+              newDeadline: { type: "string", description: "The new deadline date in YYYY-MM-DD format" },
+            },
+            required: ["taskQuery", "newDeadline"],
+          },
+        },
+      },
+    ];
+
+    const messages = [
+      { role: "system", content: systemInstruction },
+      { role: "user", content: userPrompt }
+    ];
+
+    let response = await retryWithBackoff(async () => {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: MODEL_NAME,
+          messages,
+          tools: openaiTools,
+        }),
+      });
+      if (res.status === 429) throw new Error("429");
+      if (!res.ok) throw new Error(`REST error ${res.status}`);
+      return res;
+    });
+
+    const data = await response.json();
+    const message = data.choices?.[0]?.message;
+    const text = message?.content || "";
+    const toolCalls = message?.tool_calls || [];
 
     const actions: ChatAction[] = [];
-    const fcParts = (response.candidates?.[0]?.content?.parts || []).filter(
-      p => p.functionCall
-    );
+    if (toolCalls.length > 0) {
+      messages.push(message);
 
-    if (fcParts.length > 0) {
-      const conversationHistory = [
-        { role: "user", parts: [{ text: userPrompt }] },
-        { role: "model", parts: response.candidates?.[0]?.content?.parts || [] }
-      ];
+      for (const tc of toolCalls) {
+        const { name } = tc.function;
+        let args = {};
+        try {
+          args = JSON.parse(tc.function.arguments || "{}");
+        } catch {}
 
-      const functionResponses = [];
-      for (const part of fcParts) {
-        if (!part.functionCall) continue;
-        const { name, args } = part.functionCall;
-        
         if (name === "create_task" || name === "complete_task" || name === "postpone_task") {
           actions.push({
             type: name,
-          payload: args as Record<string, unknown>,
+            payload: args as Record<string, unknown>,
           });
         }
 
-        functionResponses.push({
-          role: "function",
-          parts: [{
-            functionResponse: {
-              name,
-              response: { success: true, message: `Action ${name} executed successfully` }
-            }
-          }]
-        });
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          name,
+          content: JSON.stringify({ success: true, message: `Action ${name} executed successfully` }),
+        } as any);
       }
 
-      conversationHistory.push({
-        role: "function",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        parts: functionResponses.flatMap(fr => fr.parts) as any
+      response = await retryWithBackoff(async () => {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${key}`,
+          },
+          body: JSON.stringify({
+            model: MODEL_NAME,
+            messages,
+            tools: openaiTools,
+          }),
+        });
+        if (res.status === 429) throw new Error("429");
+        if (!res.ok) throw new Error(`REST error ${res.status}`);
+        return res;
       });
 
-      response = await retryWithBackoff(() =>
-        ai.models.generateContent({
-          model: MODEL_NAME,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          contents: conversationHistory as any,
-          config: {
-            systemInstruction: { parts: [{ text: systemInstruction }] },
-            tools: CHAT_TOOLS,
-          }
-        })
-      );
+      const secondData = await response.json();
+      const secondText = secondData.choices?.[0]?.message?.content || mockChatResponse(userPrompt);
+      return { text: secondText, actions, source: "ai" };
     }
 
-    const text = response.text || mockChatResponse(userPrompt);
-    return { text, actions, source: "ai" };
+    return { text: text || mockChatResponse(userPrompt), actions, source: "ai" };
 
   } catch (error) {
-    console.error("Conversational agent with tools failed, falling back to basic:", error);
-    try {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        config: {
-          systemInstruction: { parts: [{ text: systemInstruction }] },
-        },
-      });
-      const text = response.text || mockChatResponse(userPrompt);
-      return { text, source: "fallback" };
-    } catch {
-      return { text: mockChatResponse(userPrompt), source: "mock" };
-    }
+    console.error("Conversational agent failed:", error);
+    return { text: mockChatResponse(userPrompt), source: "mock" };
   }
 }
 

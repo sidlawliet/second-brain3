@@ -1,6 +1,5 @@
 "use server";
 
-import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
 import { Task } from "./db";
 import { hasApiKey, retryWithBackoff } from "./gemini";
 import {
@@ -15,79 +14,89 @@ import {
   getCoachingInsightAction,
 } from "@/app/actions/ai";
 
-const MODEL_NAME = "gemini-2.0-flash";
+const MODEL_NAME = process.env.OPENAI_API_MODEL || "openrouter/free";
 
-// ─── Gemini Function Declarations (tools the agents can call) ───────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const AGENT_TOOLS: any = [
+// ─── OpenAI Tools Format ─────────────────────────────────────────────────────
+const AGENT_TOOLS = [
   {
-    functionDeclarations: [
-      {
-        name: "calculate_risk",
-        description: "Calculate deadline failure risk for a task. Returns riskScore (0-100), confidenceScore (0-100), reasoning string.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            taskId: { type: Type.STRING, description: "Unique task identifier" },
-            title: { type: Type.STRING, description: "Task title" },
-            deadline: { type: Type.STRING, description: "Deadline date (YYYY-MM-DD)" },
-            postponedCount: { type: Type.NUMBER, description: "Times postponed" },
-          },
-          required: ["taskId", "title", "deadline", "postponedCount"],
+    type: "function",
+    function: {
+      name: "calculate_risk",
+      description: "Calculate deadline failure risk for a task. Returns riskScore (0-100), confidenceScore (0-100), reasoning string.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string", description: "Unique task identifier" },
+          title: { type: "string", description: "Task title" },
+          deadline: { type: "string", description: "Deadline date (YYYY-MM-DD)" },
+          postponedCount: { type: "number", description: "Times postponed" },
         },
+        required: ["taskId", "title", "deadline", "postponedCount"],
       },
-      {
-        name: "generate_reality_check",
-        description: "Generate a sharp, anti-motivational reality check for the user based on context.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            action: { type: Type.STRING, description: "Trigger action (e.g. postpone, risk, rescue, motivation)" },
-            context: { type: Type.STRING, description: "User context for personalization" },
-          },
-          required: ["action", "context"],
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_reality_check",
+      description: "Generate a sharp, anti-motivational reality check for the user based on context.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", description: "Trigger action (e.g. postpone, risk, rescue, motivation)" },
+          context: { type: "string", description: "User context for personalization" },
         },
+        required: ["action", "context"],
       },
-      {
-        name: "generate_coaching_insight",
-        description: "Generate a 1-2 sentence coaching insight based on current tasks state.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            tasksSnapshot: { type: Type.STRING, description: "JSON stringified array of current tasks" },
-          },
-          required: ["tasksSnapshot"],
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_coaching_insight",
+      description: "Generate a 1-2 sentence coaching insight based on current tasks state.",
+      parameters: {
+        type: "object",
+        properties: {
+          tasksSnapshot: { type: "string", description: "JSON stringified array of current tasks" },
         },
+        required: ["tasksSnapshot"],
       },
-      {
-        name: "delegate_to_agent",
-        description: "Delegate a sub-problem to another specialized agent (PlanningAgent, PrioritizationAgent, RescueAgent, ReflectionAgent, RealityCheckEngine). Returns the delegated agent's response.",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            targetAgent: {
-              type: Type.STRING,
-              enum: ["PlanningAgent", "PrioritizationAgent", "RescueAgent", "ReflectionAgent", "RealityCheckEngine"],
-              description: "Which specialized agent to delegate to",
-            },
-            assignment: { type: Type.STRING, description: "Specific task or question for the target agent" },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delegate_to_agent",
+      description: "Delegate a sub-problem to another specialized agent (PlanningAgent, PrioritizationAgent, RescueAgent, ReflectionAgent, RealityCheckEngine). Returns the delegated agent's response.",
+      parameters: {
+        type: "object",
+        properties: {
+          targetAgent: {
+            type: "string",
+            enum: ["PlanningAgent", "PrioritizationAgent", "RescueAgent", "ReflectionAgent", "RealityCheckEngine"],
+            description: "Which specialized agent to delegate to",
           },
-          required: ["targetAgent", "assignment"],
+          assignment: { type: "string", description: "Specific task or question for the target agent" },
         },
+        required: ["targetAgent", "assignment"],
       },
-      {
-        name: "schedule_action",
-        description: "Schedule an action or reminder for the user (e.g. start task, check progress).",
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            action: { type: Type.STRING, description: "Action verb (e.g. start, review, complete)" },
-            detail: { type: Type.STRING, description: "What to act on" },
-          },
-          required: ["action", "detail"],
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_action",
+      description: "Schedule an action or reminder for the user (e.g. start task, check progress).",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", description: "Action verb (e.g. start, review, complete)" },
+          detail: { type: "string", description: "What to act on" },
         },
+        required: ["action", "detail"],
       },
-    ],
+    },
   },
 ];
 
@@ -254,7 +263,6 @@ export async function runAgenticPipeline(
   initAgentLog(sessionId);
 
   if (!hasApiKey()) {
-    // Return mock pipeline if no Gemini API key
     const mockSteps: OrchestrationStep[] = [
       { label: "PlanningAgent", agent: "PlanningAgent", action: "Analyzing goal", tool: "reasoning", input: goal, output: `Identified 3 subtasks for "${goal}"`, status: "done", timestamp: Date.now() },
       { label: "RiskAgent", agent: "RiskAgent", action: "Calculating risk", tool: "calculate_risk", input: goal, output: "Risk score: 54% — moderate deadline pressure", status: "done", timestamp: Date.now() },
@@ -262,17 +270,18 @@ export async function runAgenticPipeline(
       { label: "RealityCheckEngine", agent: "RealityCheckEngine", action: "Generating insight", tool: "generate_reality_check", input: "User context: new goal created", output: "The deadline isn't stressful. The fact that you've known about it for weeks is.", status: "done", timestamp: Date.now() },
       { label: "ReflectionAgent", agent: "ReflectionAgent", action: "Synthesizing coaching", tool: "generate_coaching_insight", input: "Tasks state", output: "Today is about execution, not planning. Start with the highest-risk item.", status: "done", timestamp: Date.now() },
     ];
-    return { sessionId, steps: mockSteps, fullConversation: "Mock pipeline (no Gemini API key configured)" };
+    return { sessionId, steps: mockSteps, fullConversation: "Mock pipeline (no API key configured)" };
   }
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+  const key = process.env.OPENAI_API_KEY || "";
   const steps: OrchestrationStep[] = [];
 
   const taskContext = tasks.length > 0
     ? tasks.map(t => `- ${t.title} (risk: ${t.riskAnalysis.riskScore}%, due: ${t.deadline})`).join("\n")
     : "No existing tasks.";
 
-  // ─── Phase 1: Chief of Staff orchestrator decides the plan ──────────────
+  const systemInstruction = "You are the Chief of Staff orchestrator. Use function calls to delegate and tool-call. Execute at least 3 delegations and 2 direct tool calls. Show your reasoning through the tools you choose.";
+
   const orchestratorPrompt = [
     "You are the Chief of Staff — the orchestrator agent. Your job: analyze this user goal and delegate to specialized agents.",
     "",
@@ -308,51 +317,38 @@ export async function runAgenticPipeline(
       timestamp: Date.now(),
     });
 
-    let response = await retryWithBackoff(() =>
-      ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: [{ role: "user", parts: [{ text: orchestratorPrompt }] }],
-        config: {
-          systemInstruction: {
-            parts: [{ text: "You are the Chief of Staff orchestrator. Use function calls to delegate and tool-call. Execute at least 3 delegations and 2 direct tool calls. Show your reasoning through the tools you choose." }],
-          },
-          tools: AGENT_TOOLS,
-          toolConfig: {
-            functionCallingConfig: {
-              mode: FunctionCallingConfigMode.AUTO,
-            },
-          },
-        },
-      })
-    );
-
-    // ─── Multi-turn: keep calling tools and feeding results back ───────────
-    type HistoryPart = {
-      text?: string;
-      functionResponse?: {
-        name: string;
-        response: Record<string, unknown>;
-      };
-    };
-    const conversationHistory: { role: string; parts: HistoryPart[] }[] = [
-      { role: "user", parts: [{ text: orchestratorPrompt }] },
-      { role: "model", parts: (response.candidates?.[0]?.content?.parts || []).map(p => {
-        if (p.functionCall) return { text: `[function_call: ${p.functionCall.name}]` };
-        if (p.text) return { text: p.text };
-        return { text: "" };
-      })},
+    const messages: any[] = [
+      { role: "system", content: systemInstruction },
+      { role: "user", content: orchestratorPrompt }
     ];
+
+    let response = await retryWithBackoff(async () => {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: MODEL_NAME,
+          messages,
+          tools: AGENT_TOOLS,
+        }),
+      });
+      if (res.status === 429) throw new Error("429");
+      if (!res.ok) throw new Error(`REST error ${res.status}`);
+      return res;
+    });
+
+    let data = await response.json();
+    let message = data.choices?.[0]?.message;
 
     const MAX_TURNS = 10;
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      // Check if the model made function calls
-      const fcParts = (response.candidates?.[0]?.content?.parts || []).filter(
-        p => p.functionCall,
-      );
+      const toolCalls = message?.tool_calls || [];
 
-      if (fcParts.length === 0) {
-        // No more tool calls — response is text
-        const text = response.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      if (toolCalls.length === 0) {
+        const text = message?.content || "";
         if (text) {
           logStep(sessionId, {
             agent: "ChiefOfStaff",
@@ -367,51 +363,50 @@ export async function runAgenticPipeline(
         break;
       }
 
+      messages.push(message);
+
       // Execute each function call
-      const functionResponses = [];
-      for (const part of fcParts) {
-        if (!part.functionCall) continue;
-        const agentName = part.functionCall.name === "delegate_to_agent"
-          ? String((part.functionCall.args as Record<string, unknown>)?.targetAgent || "Agent")
+      for (const tc of toolCalls) {
+        const { name } = tc.function;
+        let args = {};
+        try {
+          args = JSON.parse(tc.function.arguments || "{}");
+        } catch {}
+
+        const agentName = name === "delegate_to_agent"
+          ? String((args as Record<string, unknown>)?.targetAgent || "Agent")
           : "ChiefOfStaff";
-        const result = await executeToolCall(part.functionCall, tasks, sessionId, agentName);
-        functionResponses.push({
-          role: "function" as const,
-          parts: [{
-            functionResponse: {
-              name: result.name,
-              response: result.response,
-            },
-          }],
+
+        const result = await executeToolCall({ name, args }, tasks, sessionId, agentName);
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          name,
+          content: JSON.stringify(result.response),
         });
       }
 
-      // Add function responses to history
-      conversationHistory.push(...functionResponses);
-
       // Get next model response
-      response = await retryWithBackoff(() =>
-        ai.models.generateContent({
-          model: MODEL_NAME,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          contents: conversationHistory as any,
-          config: {
-            tools: AGENT_TOOLS,
-            toolConfig: {
-              functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO },
-            },
+      response = await retryWithBackoff(async () => {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${key}`,
           },
-        })
-      );
-
-      conversationHistory.push({
-        role: "model",
-        parts: (response.candidates?.[0]?.content?.parts || []).map(p => {
-          if (p.functionCall) return { text: `[function_call: ${p.functionCall.name}]` };
-          if (p.text) return { text: p.text };
-          return { text: "" };
-        }),
+          body: JSON.stringify({
+            model: MODEL_NAME,
+            messages,
+            tools: AGENT_TOOLS,
+          }),
+        });
+        if (res.status === 429) throw new Error("429");
+        if (!res.ok) throw new Error(`REST error ${res.status}`);
+        return res;
       });
+
+      data = await response.json();
+      message = data.choices?.[0]?.message;
     }
   } catch (err) {
     const errMsg = String(err);
@@ -426,7 +421,6 @@ export async function runAgenticPipeline(
     });
   }
 
-  // ─── Build output ───────────────────────────────────────────────────────
   const rawLog = getAgentLog(sessionId);
   const resultSteps: OrchestrationStep[] = rawLog.map((s, i) => ({
     ...s,

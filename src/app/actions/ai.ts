@@ -117,7 +117,7 @@ export async function runAutoPilotAction(
   return await runAutoPilotChain(goal, userId);
 }
 
-// 9. Environment Check: Check if Gemini API key exists on server
+// 9. Environment Check: Check if OpenAI API key exists on server
 export async function checkApiKeyAction(): Promise<boolean> {
-  return Boolean(process.env.GEMINI_API_KEY);
+  return Boolean(process.env.OPENAI_API_KEY);
 }

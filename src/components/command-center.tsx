@@ -71,7 +71,7 @@ export const CommandCenter: React.FC = () => {
     const verifyApiKey = async () => {
       const active = await checkApiKeyAction();
       if (!active) {
-        addToast("GEMINI_API_KEY not set. AI features running in offline mode.", "warning");
+        addToast("OPENAI_API_KEY not set. AI features running in offline mode.", "warning");
       }
     };
     verifyApiKey();
