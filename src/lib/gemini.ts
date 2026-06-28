@@ -516,18 +516,17 @@ export async function runRescueAgent(tasks: Task[]): Promise<RescueResult> {
 }
 
 export async function runReflectionAgent(tasks: Task[]): Promise<string> {
-  const { data } = await runAgent<string>({
+  const { data } = await runAgent<{ insight: string }>({
     name: "ReflectionAgent",
     systemInstruction: "You are the Reflection Agent. Deliver a short, powerful 1–2 sentence coaching insight. Be direct, psychologically accurate, focus on action over feelings. Return JSON: { insight: string }",
     schema: { type: "OBJECT", properties: { insight: { type: "STRING" } }, required: ["insight"] },
     mockFallback: () => {
       const completed = tasks.filter(t => t.status === "done").length;
       const total = tasks.length;
-      return JSON.stringify({ insight: `${completed}/${total} done. The easy ones got checked off. The high-risk ones didn't. Stop negotiating.` });
+      return { insight: `${completed}/${total} done. The easy ones got checked off. The high-risk ones didn't. Stop negotiating.` };
     },
   }, `Tasks state: ${JSON.stringify(tasks)}`);
-  try { return JSON.parse(data).insight || "Focus on building momentum early tomorrow."; }
-  catch { return data; }
+  return data.insight || "Focus on building momentum early tomorrow.";
 }
 
 export interface RealityCheck {
