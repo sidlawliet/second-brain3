@@ -19,6 +19,17 @@ export const DailyFocusPlan: React.FC<DailyFocusPlanProps> = ({
   setSelectedTask,
   trendData
 }) => {
+  const rawTasksOrder = dailyPlan?.tasksOrder;
+  let tasksOrder: string[] = [];
+  if (Array.isArray(rawTasksOrder)) {
+    tasksOrder = rawTasksOrder;
+  } else if (rawTasksOrder && typeof rawTasksOrder === "object") {
+    const obj = (rawTasksOrder as unknown) as Record<string, unknown>;
+    if (Array.isArray(obj.tasksOrder)) {
+      tasksOrder = obj.tasksOrder as string[];
+    }
+  }
+
   return (
     <section className="lg:col-span-4 bg-surface border border-hairline rounded-lg p-5 flex flex-col space-y-4">
       <div className="flex items-center justify-between">
@@ -51,8 +62,8 @@ export const DailyFocusPlan: React.FC<DailyFocusPlanProps> = ({
         </div>
       ) : (
         <div className="space-y-3.5">
-          {dailyPlan?.tasksOrder && dailyPlan.tasksOrder.length > 0 ? (
-            dailyPlan.tasksOrder.map((tid, idx) => {
+          {tasksOrder && tasksOrder.length > 0 ? (
+            tasksOrder.map((tid, idx) => {
               const t = tasks.find(item => item.id === tid);
               if (!t || t.status === "done") return null;
 

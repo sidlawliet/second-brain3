@@ -442,10 +442,19 @@ export async function runPrioritizationAgent(tasks: Task[]): Promise<string[]> {
     priority: t.priority, riskScore: t.riskAnalysis.riskScore, status: t.status,
   }));
 
-  const { data } = await runAgent<string[]>({
+  const { data } = await runAgent<{ tasksOrder: string[] }>({
     name: "PrioritizationAgent",
-    systemInstruction: "You are the Prioritization Agent. Review tasks and rank by urgency/risk. Return a JSON array of task IDs in optimized work order.",
-    schema: { type: "ARRAY", items: { type: "STRING" } },
+    systemInstruction: "You are the Prioritization Agent. Review tasks and rank by urgency/risk. Return a JSON object with a 'tasksOrder' key containing an array of task IDs in optimized work order.",
+    schema: {
+      type: "OBJECT",
+      properties: {
+        tasksOrder: {
+          type: "ARRAY",
+          items: { type: "STRING" }
+        }
+      },
+      required: ["tasksOrder"]
+    },
     mockFallback: () => {
       const sorted = [...tasks]
         .filter(t => t.status !== "done")
@@ -454,10 +463,10 @@ export async function runPrioritizationAgent(tasks: Task[]): Promise<string[]> {
             return b.riskAnalysis.riskScore - a.riskAnalysis.riskScore;
           return a.status === "in-progress" ? -1 : 1;
         });
-      return sorted.map(t => t.id);
+      return { tasksOrder: sorted.map(t => t.id) };
     },
   }, `Prioritize these tasks: ${JSON.stringify(simplifiedTasks)}`);
-  return data;
+  return data.tasksOrder || [];
 }
 
 export async function runRiskAgent(task: Task): Promise<Task["riskAnalysis"]> {
