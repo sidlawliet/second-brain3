@@ -21,7 +21,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark bg-canvas scroll-smooth" suppressHydrationWarning>
-      <body className={`${inter.variable} antialiased font-sans bg-canvas text-body`}>
+      <body className={`${inter.variable} antialiased font-sans bg-canvas text-body`} suppressHydrationWarning>
         <AuthProvider>
           <ClientProviders>
             {children}
