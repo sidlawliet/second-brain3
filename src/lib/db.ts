@@ -6,8 +6,7 @@ import {
   deleteDoc, 
   onSnapshot, 
   query, 
-  where, 
-  orderBy
+  where
 } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "./firebase";
 

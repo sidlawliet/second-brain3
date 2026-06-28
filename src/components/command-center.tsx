@@ -765,10 +765,9 @@ export const CommandCenter: React.FC = () => {
         rescueActive={isRescueActive}
       />
 
-      {/* TASK DETAIL MODAL */}
       {selectedTask && (
         <TaskDetail
-          task={selectedTask}
+          task={tasks.find(t => t.id === selectedTask.id) || selectedTask}
           onClose={() => setSelectedTask(null)}
           onUpdateTask={handleUpdateTask}
           onDeleteTask={handleDeleteTask}
