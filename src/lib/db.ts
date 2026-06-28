@@ -210,12 +210,16 @@ const registerListener = (key: string, callback: DBListener) => {
   };
 };
 
+const shouldUseFirebase = (userId: string) => {
+  return !!(isFirebaseConfigured && db && userId && !userId.startsWith("guest"));
+};
+
 // Unified DB API
 export const dbAPI = {
   // TASKS
   subscribeTasks: (userId: string, callback: (tasks: Task[]) => void) => {
-    if (isFirebaseConfigured && db) {
-      const q = query(collection(db, "tasks"), where("userId", "==", userId), orderBy("createdAt", "desc"));
+    if (shouldUseFirebase(userId)) {
+      const q = query(collection(db!, "tasks"), where("userId", "==", userId), orderBy("createdAt", "desc"));
       return onSnapshot(q, (snapshot) => {
         const tasks: Task[] = [];
         snapshot.forEach((doc) => {
@@ -238,8 +242,8 @@ export const dbAPI = {
   },
 
   saveTask: async (userId: string, task: Task) => {
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, "tasks", task.id), task);
+    if (shouldUseFirebase(userId)) {
+      await setDoc(doc(db!, "tasks", task.id), task);
     } else {
       const storageKey = `sb_tasks_${userId}`;
       const data = localStorage.getItem(storageKey);
@@ -256,8 +260,8 @@ export const dbAPI = {
   },
 
   updateTask: async (userId: string, taskId: string, updates: Partial<Task>) => {
-    if (isFirebaseConfigured && db) {
-      await updateDoc(doc(db, "tasks", taskId), updates);
+    if (shouldUseFirebase(userId)) {
+      await updateDoc(doc(db!, "tasks", taskId), updates);
     } else {
       const storageKey = `sb_tasks_${userId}`;
       const data = localStorage.getItem(storageKey);
@@ -275,8 +279,8 @@ export const dbAPI = {
   },
 
   deleteTask: async (userId: string, taskId: string) => {
-    if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, "tasks", taskId));
+    if (shouldUseFirebase(userId)) {
+      await deleteDoc(doc(db!, "tasks", taskId));
     } else {
       const storageKey = `sb_tasks_${userId}`;
       const data = localStorage.getItem(storageKey);
@@ -289,9 +293,9 @@ export const dbAPI = {
 
   // DAILY PLANS
   subscribeDailyPlan: (userId: string, date: string, callback: (plan: DailyPlan | null) => void) => {
-    if (isFirebaseConfigured && db) {
+    if (shouldUseFirebase(userId)) {
       const docId = `${userId}_${date}`;
-      return onSnapshot(doc(db, "dailyPlans", docId), (docSnap) => {
+      return onSnapshot(doc(db!, "dailyPlans", docId), (docSnap) => {
         if (docSnap.exists()) {
           callback({ id: docSnap.id, ...docSnap.data() } as DailyPlan);
         } else {
@@ -314,8 +318,8 @@ export const dbAPI = {
   },
 
   saveDailyPlan: async (userId: string, plan: DailyPlan) => {
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, "dailyPlans", plan.id), plan);
+    if (shouldUseFirebase(userId)) {
+      await setDoc(doc(db!, "dailyPlans", plan.id), plan);
     } else {
       const storageKey = `sb_dailyPlan_${userId}_${plan.date}`;
       localStorage.setItem(storageKey, JSON.stringify(plan));
@@ -325,9 +329,9 @@ export const dbAPI = {
 
   // CHAT
   subscribeChats: (userId: string, callback: (chat: Chat | null) => void) => {
-    if (isFirebaseConfigured && db) {
+    if (shouldUseFirebase(userId)) {
       const docId = `${userId}_chat`;
-      return onSnapshot(doc(db, "chats", docId), (docSnap) => {
+      return onSnapshot(doc(db!, "chats", docId), (docSnap) => {
         if (docSnap.exists()) {
           callback({ id: docSnap.id, ...docSnap.data() } as Chat);
         } else {
@@ -348,8 +352,8 @@ export const dbAPI = {
   },
 
   saveChat: async (userId: string, chat: Chat) => {
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, "chats", chat.id), chat);
+    if (shouldUseFirebase(userId)) {
+      await setDoc(doc(db!, "chats", chat.id), chat);
     } else {
       const storageKey = `sb_chat_${userId}`;
       localStorage.setItem(storageKey, JSON.stringify(chat));
@@ -359,9 +363,9 @@ export const dbAPI = {
 
   // RESCUE SESSION
   subscribeRescueSession: (userId: string, callback: (session: RescueSession | null) => void) => {
-    if (isFirebaseConfigured && db) {
+    if (shouldUseFirebase(userId)) {
       const docId = `${userId}_rescue`;
-      return onSnapshot(doc(db, "rescueSessions", docId), (docSnap) => {
+      return onSnapshot(doc(db!, "rescueSessions", docId), (docSnap) => {
         if (docSnap.exists()) {
           callback({ id: docSnap.id, ...docSnap.data() } as RescueSession);
         } else {
@@ -386,8 +390,8 @@ export const dbAPI = {
   },
 
   setRescueSession: async (userId: string, session: RescueSession) => {
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, "rescueSessions", session.id), session);
+    if (shouldUseFirebase(userId)) {
+      await setDoc(doc(db!, "rescueSessions", session.id), session);
     } else {
       const storageKey = `sb_rescue_${userId}`;
       localStorage.setItem(storageKey, JSON.stringify(session));
