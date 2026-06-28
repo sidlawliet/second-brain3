@@ -38,7 +38,9 @@ export const DailyFocusPlan: React.FC<DailyFocusPlanProps> = ({
       {dailyPlan?.coachingInsight && (
         <div className="text-xs border-l-2 border-accent-blue bg-accent-blue-soft/30 p-3 rounded-r-md text-ink leading-relaxed">
           <p className="font-semibold text-[10px] text-accent-blue tracking-wider uppercase mb-0.5">Focus directive</p>
-          {dailyPlan.coachingInsight}
+          {typeof dailyPlan.coachingInsight === "string" 
+            ? dailyPlan.coachingInsight 
+            : ((dailyPlan.coachingInsight as unknown) as Record<string, unknown>)?.insight as string || JSON.stringify(dailyPlan.coachingInsight)}
         </div>
       )}
 
