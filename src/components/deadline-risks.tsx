@@ -39,14 +39,14 @@ export const DeadlineRisks: React.FC<DeadlineRisksProps> = ({
         <span className="text-[10px] font-semibold text-mute font-mono block uppercase">
           Add New Task Console
         </span>
-        <div className="flex flex-col md:flex-row md:items-center gap-3">
+        <div className="flex flex-col md:flex-row md:items-center gap-3 flex-wrap">
           <input
             type="text"
             value={newTaskTitle}
             onChange={(e) => setNewTaskTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleCreateTask()}
             placeholder="What goal needs decomposition? (e.g. Design Presentation Deck)"
-            className="flex-grow h-9 bg-surface text-on-dark border border-hairline rounded-md px-3 text-xs focus:outline-none focus:border-hairline-strong placeholder-stone"
+            className="flex-grow h-9 bg-surface text-on-dark border border-hairline rounded-md px-3 text-xs focus:outline-none focus:border-hairline-strong placeholder-stone min-w-[200px]"
           />
           <div className="flex items-center gap-3 flex-shrink-0 justify-between md:justify-start w-full md:w-auto">
             <div className="flex items-center space-x-1.5">
@@ -71,7 +71,7 @@ export const DeadlineRisks: React.FC<DeadlineRisksProps> = ({
 
       {/* Tasks List */}
       <div className="flex-grow overflow-x-auto">
-        <table className="w-full border-collapse">
+        <table className="w-full border-collapse min-w-[550px]">
           <thead>
             <tr className="border-b border-hairline text-left">
               <th className="py-2.5 text-[10px] font-semibold text-mute uppercase select-none tracking-wider font-mono">Task details</th>
