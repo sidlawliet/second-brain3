@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Brain,
@@ -9,7 +9,6 @@ import {
   ShieldAlert,
   Zap,
   ArrowRight,
-  CheckCircle2,
   XCircle,
   Loader2,
 } from "lucide-react";
@@ -148,8 +147,6 @@ export const AgentPipeline: React.FC<AgentPipelineProps> = ({
           <AnimatePresence initial={false}>
             {pipeline.steps.map((step, idx) => {
               const meta = getAgentMeta(step.agent);
-              const isLast = idx === pipeline.steps.length - 1;
-              const isLatestRunning = isLast && step.status === "running";
 
               return (
                 <motion.div

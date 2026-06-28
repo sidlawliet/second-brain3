@@ -274,7 +274,6 @@ export async function runAgenticPipeline(
   }
 
   const key = process.env.OPENAI_API_KEY || "";
-  const steps: OrchestrationStep[] = [];
 
   const taskContext = tasks.length > 0
     ? tasks.map(t => `- ${t.title} (risk: ${t.riskAnalysis.riskScore}%, due: ${t.deadline})`).join("\n")
@@ -293,9 +292,9 @@ export async function runAgenticPipeline(
     "You have 5 specialized agents available via delegate_to_agent:",
     "1. PlanningAgent — breaks down goals into subtasks",
     "2. PrioritizationAgent — ranks tasks by urgency/risk",
-    "3. RescueAgent — identifies critical path and non-essential work",
-    "4. ReflectionAgent — generates coaching insights",
-    "5. RealityCheckEngine — generates anti-motivational reality checks",
+    "3. RescueAgent — identifies blockers and proposes recovery actions",
+    "4. ReflectionAgent — offers daily focus insights",
+    "5. RealityCheckEngine — gives direct performance warnings",
     "",
     "Additionally, you can call these tools directly:",
     "- calculate_risk — to compute deadline failure probability",
@@ -317,7 +316,7 @@ export async function runAgenticPipeline(
       timestamp: Date.now(),
     });
 
-    const messages: any[] = [
+    const messages: Record<string, unknown>[] = [
       { role: "system", content: systemInstruction },
       { role: "user", content: orchestratorPrompt }
     ];

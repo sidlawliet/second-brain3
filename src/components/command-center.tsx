@@ -75,7 +75,7 @@ export const CommandCenter: React.FC = () => {
       }
     };
     verifyApiKey();
-  }, []);
+  }, [addToast]);
 
   // Seed onboarding data for first-time users (Firebase or localStorage)
   const [seeded, setSeeded] = useState(false);
@@ -122,7 +122,6 @@ export const CommandCenter: React.FC = () => {
       localStorage.setItem("sb_seeded_" + userId, "1");
       setSeeded(true);
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, tasks.length, seeded]);
 
   // Subscriptions

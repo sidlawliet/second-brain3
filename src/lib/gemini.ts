@@ -204,7 +204,7 @@ export async function runConversationalAgent(
       },
     ];
 
-    const messages = [
+    const messages: Record<string, unknown>[] = [
       { role: "system", content: systemInstruction },
       { role: "user", content: userPrompt }
     ];
@@ -255,7 +255,7 @@ export async function runConversationalAgent(
           tool_call_id: tc.id,
           name,
           content: JSON.stringify({ success: true, message: `Action ${name} executed successfully` }),
-        } as any);
+        });
       }
 
       response = await retryWithBackoff(async () => {

@@ -53,7 +53,7 @@ export const AuthModal: React.FC = () => {
       };
       localStorage.setItem("sb_user", JSON.stringify(guestProfile));
       window.location.reload();
-    } catch (err: unknown) {
+    } catch {
       setError("Failed to enter guest mode.");
     } finally {
       setLoading(false);
