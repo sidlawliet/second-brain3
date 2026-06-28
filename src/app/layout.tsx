@@ -20,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark bg-canvas scroll-smooth">
+    <html lang="en" className="dark bg-canvas scroll-smooth" suppressHydrationWarning>
       <body className={`${inter.variable} antialiased font-sans bg-canvas text-body`}>
         <AuthProvider>
           <ClientProviders>
