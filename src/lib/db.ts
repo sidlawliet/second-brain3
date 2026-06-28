@@ -219,12 +219,14 @@ export const dbAPI = {
   // TASKS
   subscribeTasks: (userId: string, callback: (tasks: Task[]) => void) => {
     if (shouldUseFirebase(userId)) {
-      const q = query(collection(db!, "tasks"), where("userId", "==", userId), orderBy("createdAt", "desc"));
+      const q = query(collection(db!, "tasks"), where("userId", "==", userId));
       return onSnapshot(q, (snapshot) => {
         const tasks: Task[] = [];
         snapshot.forEach((doc) => {
           tasks.push({ id: doc.id, ...doc.data() } as Task);
         });
+        // Sort tasks in-memory to avoid requiring a composite Firestore index
+        tasks.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         callback(tasks);
       });
     } else {
